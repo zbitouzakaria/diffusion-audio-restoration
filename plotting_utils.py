@@ -9,7 +9,16 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pylab as plt
 import numpy as np
-from moviepy.video.io.bindings import mplfig_to_npimage
+try:
+    # moviepy is only needed to rasterize validation plots; inference never
+    # touches it, and moviepy 2.x removed this module path anyway.
+    from moviepy.video.io.bindings import mplfig_to_npimage
+except ImportError:
+    def mplfig_to_npimage(fig):
+        raise ImportError(
+            "moviepy<2 is required for validation plotting but is not "
+            "installed; inference does not need it."
+        )
 import librosa
 
 
