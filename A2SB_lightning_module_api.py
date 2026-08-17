@@ -141,6 +141,15 @@ class TimePartitionedPretrainedSTFTBridgeModel(LightningModule):
             if mask is not None and mask_pred_x0:
                 pred_x0 = pred_x0 * mask + (1-mask) * x_1
 
+            if os.environ.get("A2SB_DEBUG_BAND"):
+                # temporary diagnostic: masked- vs unmasked-region magnitude of
+                # the per-step clean prediction (power-scaled spectrogram units)
+                with torch.no_grad():
+                    m = mask[0, 0] > 0.5
+                    print(f"A2SB_DEBUG step={t_idx} t={t[0].item():.3f} "
+                          f"masked|x0|={pred_x0[0, 0][m].abs().mean().item():.5f} "
+                          f"unmasked|x0|={pred_x0[0, 0][~m].abs().mean().item():.5f}",
+                          flush=True)
             last_pred_x0 = pred_x0.cpu()
             x_t_prev = self.ddpm.p_posterior(t_prev, t, x_t, pred_x0, ot_ode=self.use_ot_ode)
             x_t = x_t_prev
