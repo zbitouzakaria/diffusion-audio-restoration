@@ -12,8 +12,10 @@ knee detection, brick-walling — see input_prep.py for why), and config
 assembly. Drives the same `ensembled_inference_api.py` path as upstream, so
 output is bit-identical to a hand-driven run with the same settings.
 
-The model is mono and 44.1 kHz; stereo input is mono-summed. Output is a
-mono wav, padded to the input's length.
+The model is mono and 44.1 kHz; a stereo file is restored one channel at a
+time inside a single inference run (one checkpoint load), both channels
+sharing the cutoff detected on their mono sum. Output has the input's channel
+count, padded to the input's length.
 """
 
 import argparse
@@ -46,7 +48,7 @@ def fetch_checkpoints(single_split: bool) -> list[str]:
 
 
 def build_config(
-    wav_in: Path,
+    filelist: list[dict],
     checkpoints: list[str],
     device: str,
     cutoff_hz: float,
@@ -72,7 +74,7 @@ def build_config(
             "num_workers": 0,
             "batch_size": 1,
             "mix_dataset_config": {},
-            "predict_filelist": [{"filepath": str(wav_in), "output_subdir": "."}],
+            "predict_filelist": filelist,
             "transforms_aug": [
                 {
                     "class_path": "corruption.corruptions.MultinomialInpaintMaskTransform",
@@ -111,30 +113,38 @@ def restore(
     audio, sr = sf.read(str(input_path), dtype="float32", always_2d=True)
     if sr != SAMPLE_RATE:
         raise ValueError(f"A2SB expects {SAMPLE_RATE} Hz, got {sr} Hz.")
-    mono = np.ascontiguousarray(audio.T).mean(axis=0)
-    if audio.shape[1] > 1:
-        print(f"restore: mono-summing {audio.shape[1]} channels (A2SB is mono)")
+    channels = np.ascontiguousarray(audio.T)
+    if channels.shape[0] > 1:
+        print(f"restore: {channels.shape[0]} channels, restored one at a time")
 
+    # One knee for the whole file: channels of one encode share a cutoff, and
+    # detecting on the mono sum keeps them identical.
     if cutoff_hz is None:
-        cutoff_hz = bandwidth_hz(mono, sr)
+        cutoff_hz = bandwidth_hz(channels.mean(axis=0), sr)
         print(f"restore: detected bandwidth knee at {cutoff_hz:.0f} Hz")
     else:
         print(f"restore: using given cutoff {cutoff_hz:.0f} Hz")
-    if brickwall:
-        mono = brickwall_lowpass(mono, sr, cutoff_hz)
-        print(f"restore: brick-walled input at {cutoff_hz:.0f} Hz")
 
     checkpoints = fetch_checkpoints(single_split)
     print(f"restore: {len(checkpoints)}-split, {steps} steps, {device}")
 
-    total = mono.size
+    total = channels.shape[1]
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        wav_in, wav_out = tmp / "in.wav", tmp / "out.wav"
-        sf.write(str(wav_in), mono, sr, subtype="FLOAT")
+        filelist = []
+        for c, channel in enumerate(channels):
+            if brickwall:
+                channel = brickwall_lowpass(channel, sr, cutoff_hz)
+            wav = tmp / f"in_c{c}.wav"
+            sf.write(str(wav), channel, sr, subtype="FLOAT")
+            filelist.append({"filepath": str(wav), "output_subdir": f"c{c}"})
+        if brickwall:
+            print(f"restore: brick-walled input at {cutoff_hz:.0f} Hz")
+
+        out_dir = tmp / "out"
         config = tmp / "override.yaml"
         config.write_text(
-            yaml.safe_dump(build_config(wav_in, checkpoints, device, cutoff_hz, tmp))
+            yaml.safe_dump(build_config(filelist, checkpoints, device, cutoff_hz, tmp))
         )
         result = subprocess.run(
             [
@@ -144,19 +154,22 @@ def restore(
                 "-c", str(config),
                 f"--model.predict_n_steps={steps}",
                 f"--model.predict_batch_size={predict_batch_size}",
-                f"--model.output_audio_filename={wav_out}",
+                f"--model.output_audio_filename={out_dir / 'recon.wav'}",
+                "--model.output_per_input=true",
             ],
             cwd=REPO_ROOT,
         )
-        if result.returncode != 0 or not wav_out.exists():
+        recons = [out_dir / f"c{c}" / "recon.wav" for c in range(channels.shape[0])]
+        if result.returncode != 0 or not all(r.exists() for r in recons):
             raise RuntimeError("A2SB inference produced no output; see log above.")
-        restored, _ = sf.read(str(wav_out), dtype="float32", always_2d=True)
+        out = np.zeros((channels.shape[0], total), dtype=np.float32)
+        for c, recon in enumerate(recons):
+            restored, _ = sf.read(str(recon), dtype="float32", always_2d=True)
+            n = min(total, restored.shape[0])
+            out[c, :n] = restored[:n, 0]
 
-    out = np.zeros(total, dtype=np.float32)
-    n = min(total, restored.shape[0])
-    out[:n] = restored[:n, 0]
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(str(output_path), out, sr, subtype="FLOAT")
+    sf.write(str(output_path), out.T, sr, subtype="FLOAT")
     print(f"restore: wrote {output_path}")
 
 

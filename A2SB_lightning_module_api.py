@@ -50,7 +50,8 @@ class TimePartitionedPretrainedSTFTBridgeModel(LightningModule):
                  predict_win_length=256,
                  predict_batch_size=16,
                 #  predict_output_dir="output",
-                 output_audio_filename="recon.wav"
+                 output_audio_filename="recon.wav",
+                 output_per_input=False
                  ):
         super().__init__()
         self.predict_output_dir = os.path.dirname(output_audio_filename)
@@ -220,9 +221,13 @@ class TimePartitionedPretrainedSTFTBridgeModel(LightningModule):
 
         reconstructed_audio = self.vocode_stft(x_0s[-1].cpu())[0].cpu().data.numpy()
         input_audio = self.vocode_stft(x_0_corrupted.cpu())[0].cpu().data.numpy()
-        write_wav(self.output_audio_filename, batch['output_sr'], reconstructed_audio)
-        # write_wav(os.path.join(current_out_dir, "recon.wav"), batch['output_sr'], reconstructed_audio)
-        # write_wav(os.path.join(current_out_dir, "dirty.wav"), batch['output_sr'], input_audio)
+        if self.output_per_input:
+            # One recon per predict file, named by its output_subdir — lets a
+            # single invocation (one checkpoint load) process several inputs,
+            # e.g. the two channels of a stereo file.
+            write_wav(os.path.join(current_out_dir, "recon.wav"), batch['output_sr'], reconstructed_audio)
+        else:
+            write_wav(self.output_audio_filename, batch['output_sr'], reconstructed_audio)
 
 
 class STFTBridgeModel(LightningModule):

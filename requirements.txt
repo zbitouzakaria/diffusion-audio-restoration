@@ -1,18 +1,25 @@
 # Runtime requirements for inference via restore.py.
+#
+# Exact pins, not ranges: a fresh resolve in 2026-09 pulled jsonargparse 4.51
+# whose config nodes stopped matching the Namespace type-check in
+# audio_transforms (transforms arrived as plain dicts and were "called"), and
+# a torch built for a newer CUDA than pod drivers provide. These are the
+# versions the August 2026 runs used, recovered from that environment.
+#
 # Validation extras (moviepy<2 for plot rasterization) are optional; their
 # imports are guarded. ssr_eval is intentionally absent — it cannot be
 # installed on a current toolchain and is only referenced in validation.
-torch>=2.2
-torchaudio>=2.2
-lightning>=2.3
-jsonargparse[signatures]>=4.27.7
-numpy
-scipy
-librosa
-soundfile
-einops
-rotary-embedding-torch
-pyyaml
-tqdm
-matplotlib
-huggingface_hub
+torch==2.7.1
+torchaudio==2.7.1
+lightning==2.6.5
+jsonargparse[signatures]==4.50.0
+numpy==2.4.6
+scipy==1.17.1
+librosa==0.11.0
+soundfile==0.14.0
+einops==0.8.2
+rotary-embedding-torch==0.9.1
+pyyaml>=6
+tqdm==4.70.0
+matplotlib==3.11.1
+huggingface_hub==1.27.0
